@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "stdio.h"
 
 struct {
   struct spinlock lock;
@@ -112,17 +113,28 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
-  // Set etime, ctime, rtime
+  // Number of times the process is picked by the scheduler
+  p->n_run = 0;
+
+  p->priority = 60;
+
+  // Queue related initializations
+  p->cur_q = -1;
+  for(int qid = 0; qid < 5; qid++)
+    p->q[qid] = 0;
+
+  // Set etime, ctime, rtime and curr_wtime
   p->ctime = ticks;
   p->rtime = 0;
   p->etime = 0;
+  p->curr_wtime = 0;
 
   return p;
 }
 
-// Update the rtime for each running process. Called at every TIMER interrupt.
+// Update the rtime and curr_wtime for running/waiting processes. Called at every TIMER interrupt.
 void 
-update_rtime(void){
+update_proc_times(void){
   struct proc* p;
 
   acquire(&ptable.lock);
@@ -130,6 +142,8 @@ update_rtime(void){
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == RUNNING)
       p->rtime++;
+    else if(p->state == RUNNABLE)
+      p->curr_wtime++;
 
   release(&ptable.lock);
 
@@ -379,6 +393,40 @@ waitx(int* wtime, int* rtime)
   }
 }
 
+// Display information about active processes
+void 
+psx(void)
+{
+  struct proc *p;
+  char* state;
+
+  static char *states[] = {
+  [UNUSED]    "unused",
+  [EMBRYO]    "embryo",
+  [SLEEPING]  "sleep ",
+  [RUNNABLE]  "runble",
+  [RUNNING]   "run   ",
+  [ZOMBIE]    "zombie"
+  };
+
+  cprintf("PID  Priority  State  r_time  w_time  n_run  cur_q  q0  q1  q2  q3  q4\n");
+
+  acquire(&ptable.lock);
+  acquire(&tickslock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == UNUSED)
+      continue;
+    if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
+      state = states[p->state];
+    else
+      state = "???";
+    
+    cprintf("%d     %d      %s    %d       %d       %d      %d   %d   %d   %d   %d   %d\n", p->pid, p->priority, state, p->rtime, p->curr_wtime, p->n_run, p->cur_q, p->q[0], p->q[1], p->q[2], p->q[3], p->q[4]);
+  }
+  release(&tickslock);
+  release(&ptable.lock);
+}
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -410,6 +458,9 @@ scheduler(void)
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
+
+      p->n_run++;
+      p->curr_wtime = 0;
 
       swtch(&(c->scheduler), p->context);
       switchkvm();

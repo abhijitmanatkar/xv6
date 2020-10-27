@@ -102,3 +102,10 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int
+sys_psx(void)
+{
+  psx();
+  return 0;
+}

@@ -10,6 +10,12 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+// Macros for schedulers
+#define RR 1
+#define FCFS 2
+#define PBS 3
+#define MLFQ 4
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);

@@ -6,7 +6,6 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
-#include "stdio.h"
 
 struct {
   struct spinlock lock;
@@ -435,6 +434,8 @@ psx(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+#if SCHED==RR
 void
 scheduler(void)
 {
@@ -473,6 +474,57 @@ scheduler(void)
 
   }
 }
+
+#elif SCHED==FCFS
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  //cprintf("entered scheduler on cpu %d, process %d\n", c->apicid, c->proc->pid);
+  c->proc = 0;
+  struct proc *next_proc;
+  int min_ctime; 
+
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+    min_ctime = ticks + 100;
+    next_proc = 0;
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      if(p->ctime < min_ctime){
+        next_proc = p;
+        min_ctime = p->ctime;
+      }
+    }
+    if(next_proc != 0){
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      c->proc = next_proc;
+      switchuvm(next_proc);
+      next_proc->state = RUNNING;
+
+      next_proc->n_run++;
+      next_proc->curr_wtime = 0;
+
+      swtch(&(c->scheduler), next_proc->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+    }
+    release(&ptable.lock);
+  }
+}
+
+#endif
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores

@@ -426,6 +426,34 @@ psx(void)
   release(&ptable.lock);
 }
 
+// Change priority of a process
+int
+set_priority(int new_priority, int pid)
+{ 
+  if(new_priority < 0 || new_priority > 100){
+    return -1;
+  }
+
+  int old_priority = -1;
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == UNUSED || p->state == ZOMBIE || p->pid != pid)
+      continue;
+    
+    old_priority = p->priority;
+    p->priority = new_priority;
+    break;
+  }
+  release(&ptable.lock);
+  
+  if(new_priority < old_priority)
+    yield();
+  
+  return old_priority;
+}
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -500,6 +528,55 @@ scheduler(void)
       if(p->ctime < min_ctime){
         next_proc = p;
         min_ctime = p->ctime;
+      }
+    }
+    if(next_proc != 0){
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      c->proc = next_proc;
+      switchuvm(next_proc);
+      next_proc->state = RUNNING;
+
+      next_proc->n_run++;
+      next_proc->curr_wtime = 0;
+
+      swtch(&(c->scheduler), next_proc->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+    }
+    release(&ptable.lock);
+  }
+}
+
+#elif SCHED==PBS
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  //cprintf("entered scheduler on cpu %d, process %d\n", c->apicid, c->proc->pid);
+  c->proc = 0;
+  struct proc *next_proc;
+  int highest_priority; 
+
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+    highest_priority = 200;
+    next_proc = 0;
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      if(p->priority < highest_priority){
+        next_proc = p;
+        highest_priority = p->priority;
       }
     }
     if(next_proc != 0){

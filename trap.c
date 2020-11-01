@@ -107,9 +107,28 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER)
     yield();
-  #endif
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
+
+  // In case of MLFQ, yield only if process exceeds it's allowed number of time slices.
+  #elif SCHED==MLFQ
+  if(myproc() && myproc()->state == RUNNING && tf->trapno == T_IRQ0+IRQ_TIMER){
+    if( myproc()->curr_rtime > (1<<(myproc()->cur_q)) ){
+      myproc()->to_demote = 1;
+      yield();
+    }
+    /*
+    if(demote_proc(myproc())){
+      cprintf("demoted %d\n", myproc()->pid);
+      yield(); 
+    }
+    */
+  }
+  
+  if (myproc() && myproc()->killed && (tf->cs & 3) == DPL_USER)
+    exit();
+  
+  #endif
 }

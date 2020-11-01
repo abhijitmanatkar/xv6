@@ -58,6 +58,7 @@ struct proc {
   int n_run;                   // Number of times the process was picked by scheduler
   int cur_q;                   // Current queue of process
   int q[5];                    // Number of ticks in each queue
+  int to_demote;
 };
 
 void update_proc_times(void);
@@ -69,13 +70,18 @@ void update_proc_times(void);
 
 
 typedef struct node {
+    int used;
     struct proc* p;
     struct node* prev;
     struct node* next;
 } node;
 
+node* QUEUES[5];
+node NODES[64];
+
+void init_queues();
+
 node* push_proc(node* head, struct proc* p);
 node* pop_proc(node* head);
 node* del_proc(node* head, struct proc* p);
-
-node* QUEUES[5];
+int demote_proc(struct proc* p);

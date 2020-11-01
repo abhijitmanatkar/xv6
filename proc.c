@@ -24,6 +24,10 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  
+  #if SCHED==MLFQ
+  init_queues();
+  #endif
 }
 
 // Must be called with interrupts disabled
@@ -118,7 +122,11 @@ found:
   p->priority = 60;
 
   // Queue related initializations
+  #if SCHED==MLFQ
+  p->cur_q = 0;
+  #else
   p->cur_q = -1;
+  #endif
   for(int qid = 0; qid < 5; qid++)
     p->q[qid] = 0;
 
@@ -144,7 +152,7 @@ update_proc_times(void){
       p->rtime++;
       p->curr_rtime++;
       #if SCHED==MLFQ
-      p->q[cur_q]++;
+      p->q[p->cur_q]++;
       #endif
     }
     else if(p->state == RUNNABLE)
@@ -188,7 +196,11 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
-
+  
+  #if SCHED==MLFQ
+  QUEUES[0] = push_proc(QUEUES[0], p);
+  #endif
+  
   release(&ptable.lock);
 }
 
@@ -254,6 +266,10 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  
+  #if SCHED==MLFQ
+  QUEUES[0] = push_proc(QUEUES[0], np);
+  #endif
 
   release(&ptable.lock);
 
@@ -460,6 +476,77 @@ set_priority(int new_priority, int pid)
   return old_priority;
 }
 
+// Move process from it's current queue to the queue below it
+// if process has run for longer than it's allowed time slice
+int
+demote_proc(struct proc* p){
+
+  acquire(&ptable.lock);
+
+  if(p->curr_rtime <= (1<<(p->cur_q))){
+    release(&ptable.lock);
+    return 0;
+  }
+
+  if(p->cur_q == 4){
+    // If already in the last queue, simply remove and push to the end
+    p->curr_rtime = 0;
+    p->curr_wtime = 0;
+    QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
+    QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
+    release(&ptable.lock);
+    return 1;
+  }
+
+  QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
+  p->cur_q++;
+  p->curr_rtime = 0;
+  p->curr_wtime = 0;
+  QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
+  release(&ptable.lock);
+
+  return 1;
+}
+
+void
+dem_proc(struct proc* p){
+  
+  if(p->cur_q == 4){
+    // If already in the last queue, simply remove and push to the end
+    p->curr_rtime = 0;
+    p->curr_wtime = 0;
+    QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
+    QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
+    return;
+  }
+
+  QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
+  p->cur_q++;
+  p->curr_rtime = 0;
+  p->curr_wtime = 0;
+  QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
+}
+
+void
+promote_proc(struct proc* p){
+  
+  if(p->cur_q == 0){
+    // If already in the first queue, simply remove and push to the end
+    p->curr_rtime = 0;
+    p->curr_wtime = 0;
+    QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
+    QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
+    return;
+  }
+
+  QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
+  p->cur_q--;
+  p->curr_rtime = 0;
+  p->curr_wtime = 0;
+  QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
+
+}
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -566,7 +653,6 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  //cprintf("entered scheduler on cpu %d, process %d\n", c->apicid, c->proc->pid);
   c->proc = 0;
   struct proc *next_proc;
   int highest_priority; 
@@ -611,7 +697,78 @@ scheduler(void)
 }
 
 #elif SCHED==MLFQ
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+  struct proc *next_proc;
 
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+    
+    // Aging
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      if(p->curr_wtime > 10)
+        promote_proc(p);
+    }
+    release(&ptable.lock);
+    
+    next_proc = 0;
+
+    // Loop over process queues looking for process to run.
+    acquire(&ptable.lock);
+    
+    for(int qid = 0; qid <= 4; qid++){
+      if(QUEUES[qid] == 0)
+        continue;
+      next_proc = QUEUES[qid]->p;
+      QUEUES[qid] = pop_proc(QUEUES[qid]);
+      break;
+    }
+
+    if(next_proc != 0 && next_proc->state == RUNNABLE){
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      c->proc = next_proc;
+      switchuvm(next_proc);
+      next_proc->state = RUNNING;
+
+      next_proc->n_run++;
+      next_proc->curr_wtime = 0;
+      next_proc->curr_rtime = 0;
+
+      swtch(&(c->scheduler), next_proc->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      
+      if(next_proc != 0 && next_proc->state == RUNNABLE){
+        if(next_proc->to_demote){
+          dem_proc(next_proc);
+          next_proc->to_demote = 0;
+        }  
+        else
+        {
+          next_proc->curr_rtime = 0;
+          next_proc->curr_wtime = 0;
+          QUEUES[next_proc->cur_q] = push_proc(QUEUES[next_proc->cur_q], next_proc);
+        }
+        
+        
+      }
+    }
+    release(&ptable.lock);
+  }
+}
 #endif
 
 // Enter scheduler.  Must hold only ptable.lock
@@ -720,7 +877,13 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
+    {
       p->state = RUNNABLE;
+      #if SCHED==MLFQ
+      p->curr_rtime = 0;
+      QUEUES[0] = push_proc(QUEUES[0], p);
+      #endif
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -746,7 +909,12 @@ kill(int pid)
       p->killed = 1;
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
+      {
         p->state = RUNNABLE;
+        #if SCHED==MLFQ
+        QUEUES[0] = push_proc(QUEUES[0], p);
+        #endif
+      }
       release(&ptable.lock);
       return 0;
     }

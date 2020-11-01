@@ -54,6 +54,7 @@ struct proc {
   int etime;                   // Process exit time
   int rtime;                   // Process run time
   int curr_wtime;              // Number of clock cycles for which the process has been waiting currently
+  int curr_rtime;              // Number of clock cycles for which the process has been running currently
   int n_run;                   // Number of times the process was picked by scheduler
   int cur_q;                   // Current queue of process
   int q[5];                    // Number of ticks in each queue
@@ -65,3 +66,16 @@ void update_proc_times(void);
 //   original data and bss
 //   fixed-size stack
 //   expandable heap
+
+
+typedef struct node {
+    struct proc* p;
+    struct node* prev;
+    struct node* next;
+} node;
+
+node* push_proc(node* head, struct proc* p);
+node* pop_proc(node* head);
+node* del_proc(node* head, struct proc* p);
+
+node* QUEUES[5];

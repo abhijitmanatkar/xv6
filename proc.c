@@ -122,16 +122,17 @@ found:
   for(int qid = 0; qid < 5; qid++)
     p->q[qid] = 0;
 
-  // Set etime, ctime, rtime and curr_wtime
+  // Set etime, ctime, rtime, curr_wtime and curr_rtime
   p->ctime = ticks;
   p->rtime = 0;
   p->etime = 0;
   p->curr_wtime = 0;
+  p->curr_rtime = 0;
 
   return p;
 }
 
-// Update the rtime and curr_wtime for running/waiting processes. Called at every TIMER interrupt.
+// Update the rtime, curr_rtime and curr_wtime for running/waiting processes. Called at every TIMER interrupt.
 void 
 update_proc_times(void){
   struct proc* p;
@@ -139,8 +140,13 @@ update_proc_times(void){
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == RUNNING)
+    if(p->state == RUNNING){
       p->rtime++;
+      p->curr_rtime++;
+      #if SCHED==MLFQ
+      p->q[cur_q]++;
+      #endif
+    }
     else if(p->state == RUNNABLE)
       p->curr_wtime++;
 
@@ -490,6 +496,7 @@ scheduler(void)
 
       p->n_run++;
       p->curr_wtime = 0;
+      p->curr_rtime = 0;
 
       swtch(&(c->scheduler), p->context);
       switchkvm();
@@ -540,6 +547,7 @@ scheduler(void)
 
       next_proc->n_run++;
       next_proc->curr_wtime = 0;
+      next_proc->curr_rtime = 0;
 
       swtch(&(c->scheduler), next_proc->context);
       switchkvm();
@@ -589,6 +597,7 @@ scheduler(void)
 
       next_proc->n_run++;
       next_proc->curr_wtime = 0;
+      next_proc->curr_rtime = 0;
 
       swtch(&(c->scheduler), next_proc->context);
       switchkvm();
@@ -600,6 +609,8 @@ scheduler(void)
     release(&ptable.lock);
   }
 }
+
+#elif SCHED==MLFQ
 
 #endif
 

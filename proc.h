@@ -84,4 +84,4 @@ void init_queues();
 node* push_proc(node* head, struct proc* p);
 node* pop_proc(node* head);
 node* del_proc(node* head, struct proc* p);
-int demote_proc(struct proc* p);
+void dem_proc(struct proc* p);

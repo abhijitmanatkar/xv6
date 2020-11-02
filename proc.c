@@ -478,36 +478,6 @@ set_priority(int new_priority, int pid)
 
 // Move process from it's current queue to the queue below it
 // if process has run for longer than it's allowed time slice
-int
-demote_proc(struct proc* p){
-
-  acquire(&ptable.lock);
-
-  if(p->curr_rtime <= (1<<(p->cur_q))){
-    release(&ptable.lock);
-    return 0;
-  }
-
-  if(p->cur_q == 4){
-    // If already in the last queue, simply remove and push to the end
-    p->curr_rtime = 0;
-    p->curr_wtime = 0;
-    QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
-    QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
-    release(&ptable.lock);
-    return 1;
-  }
-
-  QUEUES[p->cur_q] = del_proc(QUEUES[p->cur_q], p);
-  p->cur_q++;
-  p->curr_rtime = 0;
-  p->curr_wtime = 0;
-  QUEUES[p->cur_q] = push_proc(QUEUES[p->cur_q], p);
-  release(&ptable.lock);
-
-  return 1;
-}
-
 void
 dem_proc(struct proc* p){
   
